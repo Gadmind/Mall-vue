@@ -1,5 +1,7 @@
 <template>
   <div>
+    <el-switch v-model="draggable" active-text="开启拖拽" inactive-text="关闭拖拽"></el-switch>
+    <el-button v-if="draggable" @click="batchSave">批量保存</el-button>
     <el-tree
       :data="menus"
       :props="defaultProps"
@@ -7,7 +9,8 @@
       node-key="catId"
       :expand-on-click-node="false"
       :default-expanded-keys="expandedKey"
-      draggable
+      @node-drop="handleDrop"
+      :draggable="draggable"
       :allow-drop="allowDrop"
     >
       <span class="custom-tree-node" slot-scope="{ node, data }">
@@ -57,6 +60,9 @@
 export default {
   data() {
     return {
+      pCid: [],
+      draggable: false,
+      updateNodes: [],
       maxLevel: 0,
       title: "",
       dialogType: "",
@@ -192,11 +198,66 @@ export default {
         })
         .catch(() => {});
     },
+    handleDrop(draggingNode, dropNode, dropType, ev) {
+      //1、当前节点的父节点ID
+      let pCid = 0;
+      let sibling = null;
+      if (dropType == "before" || dropType == "after") {
+        pCid =
+          dropNode.parent.data.catId == undefined
+            ? 0
+            : dropNode.parent.data.catId;
+        sibling = dropNode.parent.childNodes;
+      } else {
+        pCid = dropNode.data.catId;
+        sibling = dropNode.childNodes;
+      }
+      this.pCid .push(pCid);
+      //2、当前拖拽节点的最新顺序
+      for (let i = 0; i < sibling.length; i++) {
+        if (sibling[i].data.catId == draggingNode.data.catId) {
+          this.updateNodes.push({
+            catId: sibling[i].data.catId,
+            sort: i,
+            parentCid: pCid
+          });
+          let catLevel = draggingNode.level;
+          if (sibling[i].level != draggingNode.level) {
+            //当前层级变换
+            catLevel = sibling[i].level;
+            //修改子节点层级
+            this.updateChildNodeLevel(sibling[i]);
+          }
+        } else {
+          this.updateNodes.push({ catId: sibling[i].data.catId, sort: i });
+        }
+      }
+      console.log(this.updateNodes);
+
+      //3、当前拖拽节点最新层级
+    },
+    batchSave() {
+      this.$http({
+        url: this.$http.adornUrl("/product/category/update/sort"),
+        method: "POST",
+        data: this.$http.adornData(this.updateNodes, false)
+      }).then(({ data }) => {
+        this.$message({
+          showClose: true,
+          message: "菜单顺序修改成功",
+          type: "success"
+        });
+        this.getMenus();
+        this.expandedKey = this.pCid;
+        this.updateNodes = [];
+        this.maxLevel = 0;
+        this.pCid = 0;
+      });
+    },
     allowDrop(draggingNode, dropNode, type) {
       //总层数不能大于3
-      console.log("allowDrop" + draggingNode, dropNode, type);
-      this.countNodeLevel(draggingNode.data);
-      let deep = this.maxLevel - draggingNode.data.catLevel + 1;
+      this.countNodeLevel(draggingNode);
+      let deep = Math.abs(this.maxLevel - draggingNode.level) + 1;
       if (type == "inner") {
         return deep + dropNode.level <= 3;
       } else {
@@ -205,12 +266,24 @@ export default {
     },
     //得到菜单最大深度 递归
     countNodeLevel(node) {
-      if (node.children != null && node.children.length > 0) {
-        for (let i = 0; i < node.children.length; i++) {
-          if (node.children[i].catLevel > this.maxLevel) {
-            this.maxLevel = node.children[i].catLevel;
+      if (node.childNodes != null && node.childNodes.length > 0) {
+        for (let i = 0; i < node.childNodes.length; i++) {
+          if (node.childNodes[i].level > this.maxLevel) {
+            this.maxLevel = node.childNodes[i].level;
           }
-          this.countNodeLevel(node.children[i]);
+          this.countNodeLevel(node.childNodes[i]);
+        }
+      }
+    },
+    updateChildNodeLevel(node) {
+      if (node.childNodes.length > 0) {
+        for (let i = 0; i < node.childNodes.length; i++) {
+          var currentNode = node.childNodes[i].data;
+          this.updateNodes.push({
+            catId: currentNode.catId,
+            catLevel: node.childNodes[i].level
+          });
+          this.updateChildNodeLevel(node.childNodes[i]);
         }
       }
     }
